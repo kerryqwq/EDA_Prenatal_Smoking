@@ -1,0 +1,846 @@
+---
+title: "Project1"
+author: "Kerry Ye"
+date: "2023-10-02"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = F)
+knitr::opts_chunk$set(warning = F)
+```
+
+
+```{r, echo=FALSE}
+library(mice)
+library(knitr)
+library(naniar)
+library(tidyverse)
+library(gridExtra)
+library(gtsummary)
+```
+
+```{r, echo=FALSE}
+tobacco <- read.csv("/Users/kerryqwq/Downloads/project1.csv")
+#tobacco
+```
+
+**Introduction**
+
+In collaboration with Dr. Lauren Micalizzi, this project aims to conduct an Exploratory Data Analysis to investigate the impacts of smoking during pregnancy (SDP) and environmental tobacco smoke (ETS) exposure on children's substance use, externalizing behaviors, and self-regulation. Originating from a smoke avoidance program for low-income pregnant women on reducing both SDP and ETS exposure. A select group of adolescents and their mothers were chosen for further research. Currently, we have the baseline data, with two longitudinal follow-up assessments for 6 and 12 months post-baseline. This collected dataset comprises 49 pairs of adolescents and mothers, with 78 variables from both the current and prior studies.
+
+**Pre-processing Data**
+
+In the process of data pre-processing, we identified multiple issues within the dataset. Firstly, the *mom_numcig* column, which represents the number of cigarettes a mother smokes per day, contained several incorrect entries. For example, the entry "2 black and miles a day" was corrected to 2. The value "44989", which is implausibly high, was replaced with "NA". The term "None" was converted to the number 0. For the entry "20-25", we used its approximate mean, updating the value to 23. Additionally, in the *income* column, an incorrect entry "250, 000" was corrected by removing the comma, resulting in the integer 250000. For consistency, we converted all entries of "2=No" in the dataset to 0 and "1=Yes" to 1, while empty entries were replaced with "NA". In the *swan_inattentive* and *swan_hyperactive* columns, values of 0 were correctly modified to "NA". Lastly, we changed various categorical variables into the factor type when their entries represented different levels. All columns of character type that contained numeric values were transformed into numeric type.
+
+```{r, echo=FALSE}
+# fix the issues in the mom_numcig column
+tobacco$mom_numcig[tobacco$mom_numcig == "2 black and miles a day"] <- 2
+tobacco$mom_numcig[tobacco$mom_numcig == "44989"] <- NA
+tobacco$mom_numcig[tobacco$mom_numcig == "None"] <- 0
+tobacco$mom_numcig[tobacco$mom_numcig == "20-25"] <- 23
+
+# fix the issues in the income column
+tobacco$income[tobacco$income == "250, 000"] <- 250000
+
+# replace the 2=No to 0 and 1=Yes to 1 for all binary variables
+tobacco <- sapply(tobacco, function(col) {
+    col <- replace(col, col == "2=No", 0)
+    col <- replace(col, col == "1=Yes", 1)
+    replace(col, col == "", NA)
+})
+tobacco <- data.frame(tobacco)
+
+# fix the issues in the swan_inattentive and swan_hyperactive column
+tobacco$swan_inattentive[tobacco$swan_inattentive == 0] <- NA
+tobacco$swan_hyperactive [tobacco$swan_hyperactive == 0]<- NA
+
+# transform different types of the categorical variables into factors
+factor_columns <- c("psex", "plang", "pethnic", "paian", "pasian", "pnhpi", "pblack", "pwhite", "prace_other", "employ", "pedu", "childasd", "nidaalc", "nidatob", "nidapres", "nidaill", "mom_smoke_16wk", "mom_smoke_22wk","mom_smoke_32wk", "mom_smoke_pp1", "mom_smoke_pp2", "mom_smoke_pp12wk", "mom_smoke_pp6mo", "smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr", "tsex", "language", "tethnic", "taian", "tasian", "tnhpi", "tblack", "twhite", "trace_other", "cig_ever", "e_cig_ever", "mj_ever", "alc_ever")
+tobacco[factor_columns] <- lapply(tobacco[factor_columns], as.factor)
+
+# transform the character column into numeric
+tobacco <- tobacco %>% mutate_if(is.character, as.numeric)
+```
+
+
+```{r, echo=FALSE, include=FALSE}
+lapply(tobacco, unique)
+```
+
+
+```{r, fig.height=13, echo = FALSE, include=FALSE}
+md.pattern(tobacco, rotate.names = T)
+```
+
+**Missing Data**
+
+A significant issue researchers should be aware of is the considerable amount of missing values in this dataset. The presence of missing data can reduce the statistical power of the analysis, making it more challenging to detect significant differences in relationships and potentially leading to less accurate and robust estimations in subsequent modeling. Out of the 78 variables in this dataset, 65 variables have missing values.  
+```{r, echo=FALSE, fig.height=3, fig.width=7}
+missing_names <- colnames(tobacco)[colSums(is.na(tobacco)) > 0]
+tobacco_missing <- tobacco[,c(missing_names)]
+tobacco_miss <- miss_var_summary(tobacco_missing)
+df1 <- tobacco_miss[1:5,]
+df2 <- tobacco_miss[61:65,]
+kable(cbind(df1, df2), booktabs = T, escape = T, caption = "Top 5 and Bottom 5 Variables by Missingness in Tobacco Dataset", align = "c") 
+```
+Examining the above "Top 5 and Bottom 5 Variables by Missingness in Tobacco Dataset" table reveals that the five variables with the highest percentages of missingness are *num_cigs_30*, *num_e_cigs_30*, *num_mj_30*, *num_alc_30*, and *mom_smoke_pp1*. Their missingness percentages range from 97.95918% to 79.59184%. Relying on these columns for analysis could skew results given their substantial missing data. Specifically, the *num_cigs_30* variable, which has the highest percentage of missing data at over 97.95918%, has 48 missing values. On the other hand, the variables with the smallest percentages of missingness are *employ*, *pedu*, *mom_smoke_22wk*, *mom_smoke_pp12wk*, and *mom_smoke_16wk*, missingness range from 16.326531% to 2.040816%.
+
+**Demographic**
+
+One crucial aspect of Exploratory Data Analysis (EDA) is assessing the demographics of the patients in the study, as it helps in determining the generalizability of the study results.  If a study only includes a specific demographic group, its results might not be applicable to other groups. In this study, we examine the demographics of both adolescents and parents. We present two graphs that depict the distinct univariate demographic distributions for these two groups.
+
+```{r, echo=FALSE}
+tobacco_parent_demo <- tobacco %>%
+  mutate(race = case_when(paian == 1 ~ "American Indian/Alaska Native",
+                          pasian == 1 ~ "Asian",
+                          pnhpi == 1 ~ "Native Hawaiian/Pacific Islander", 
+                          pblack == 1 ~ "Black/African American", 
+                          pwhite == 1 ~ "White", 
+                          prace_other == 1 ~ "Other",
+                          TRUE ~ NA)) %>%
+  select("parent_id", "page", "psex", "plang", "pethnic", "employ", "pedu", "income", "race")
+```
+
+```{r, fig.height=5, fig.width=10, echo=FALSE}
+a1 <- tobacco_parent_demo %>%
+  na.omit() %>%
+  ggplot(aes(x = page)) + geom_bar(fill = "pink3") +
+  scale_x_discrete(limits = 30:46) + labs(title = "Distribution of Parent Age", x = "Parent Age", y = "Count")
+
+a2 <- tobacco_parent_demo %>%
+  na.omit() %>%
+  ggplot(aes(x = psex)) + geom_bar(fill = "pink3") +
+  scale_x_discrete(labels=c("Male", "Female", "Intersex")) +
+  labs(title = "Distribution of Parent Sex", x = "Parent Sex", y = "Count")
+
+a3 <- tobacco_parent_demo %>%
+  na.omit() %>%
+  ggplot(aes(x = plang)) + geom_bar(fill = "pink3") +
+  scale_x_discrete(labels=c("No", "Yes")) +
+  labs(title = "Distribution of Parent Language", x = "Parent Language", y = "Count")
+
+a4 <- tobacco_parent_demo %>%
+  na.omit() %>%
+  ggplot(aes(x = pethnic)) + geom_bar(fill = "pink3") +
+  scale_x_discrete(labels=c("Not Hispanic/Latino", "Hispanic/Latino")) +
+  labs(title = "Distribution of Parent Ethnic", x = "Parent Ethnic", y = "Count")
+
+a5 <- tobacco_parent_demo %>%
+  na.omit() %>%
+  ggplot(aes(x = employ)) + geom_bar(fill = "pink3")+
+  scale_x_discrete(labels=c("No", "Part-Time", "Full-Time")) +
+  labs(title = "Distribution of Parent Employment", x = "Parent Employment", y = "Count")
+
+a6 <- tobacco_parent_demo %>%
+  na.omit() %>%
+  ggplot(aes(x = pedu)) + geom_bar(fill = "pink3")+
+  scale_x_discrete(labels=c("some high school", "high school", "GED", "some college", "2 year degree", "4 year degree",
+                            "postgraduate degree")) +
+  labs(title = "Distribution of Parent Education", x = "Parent Education", y = "Count")
+
+a7 <- tobacco_parent_demo %>%
+  na.omit() %>%
+ggplot(aes(x = income)) + geom_density(fill = "pink3") +
+  scale_x_continuous(breaks = c(0, 100000, 200000),
+                     labels = c("0", "100,000", "200,000"))+
+  labs(title = "Distribution of Parent Income", x = "Parent Income", y = "Count")
+
+a8 <- tobacco_parent_demo %>%
+  na.omit() %>%
+  ggplot(aes(x = race)) + geom_bar(fill = "pink3") +
+  labs(title = "Distribution of Parent Race", x = "Parent Race", y = "Count")
+
+grid.arrange(a1, a2, a3, a4, a5, a6, a7, a8, ncol=2)
+```
+
+The graph above displays various distributions of demographic variables for parents. The age distribution reveals that the majority of parents in this study fall between the ages of 33 to 39. Fewer are distributed between the ages of 40 to 45, and none are below 33 or exceed 45. The gender distribution indicates that out of 49 parents, 48 are female, with only one male present in the dataset. This lone male entry might have been inadvertently included or could represent an erroneous data entry. The language distribution suggests that most participants speak the same language at home. In terms of ethnicity, a larger proportion identify as not Hispanic or Latino compared to those who identify as Hispanic/Latino. The employment distribution reveals that most parents work full-time. The second-largest group is unemployed, and the smallest group works part-time. Regarding education, the majority of parents have attended some college, followed by those who have completed four years of college, and the fewest have only a high school education. The income distribution highlights that the majority of parents earn between 0 to 100,000, with a concentration around 50,000 and a few earning more than 100,000. In terms of race, most parents are White. Fewer identify as American Indian/Alaska Native, Hawaiian/Pacific Islander, or other, and there are no participants identifying as Asian or African American. Researchers should be mindful of the parents' racial composition in this study, as minority groups are underrepresented. Additionally, attention should be given to the education level, as only a few participants have education levels below college.
+
+```{r, echo=FALSE}
+tobacco_child_demo <- tobacco %>%
+  mutate(race = case_when(taian == 1 ~ "American Indian/Alaska Native",
+                          tasian == 1 ~ "Asian",
+                          pnhpi == 1 ~ "Native Hawaiian/Pacific Islander", 
+                          tblack == 1 ~ "Black/African American", 
+                          twhite == 1 ~ "White", 
+                          trace_other == 1 ~ "Other",
+                          TRUE ~ NA)) %>%
+  select("parent_id", "tage", "tsex", "language", "tethnic", "race")
+```
+
+```{r, fig.height=5, fig.width=10, echo=FALSE}
+b1 <- tobacco_child_demo %>%
+  na.omit() %>%
+  ggplot(aes(x = tage)) + geom_bar(fill = "skyblue3") +
+  labs(title = "Distribution of Children Age", x = "Children Age", y = "Count")
+
+b2 <- tobacco_child_demo %>%
+  na.omit() %>%
+  ggplot(aes(x = tsex)) + geom_bar(fill = "skyblue3") +
+  scale_x_discrete(labels=c("Male", "Female", "Intersex")) +
+  labs(title = "Distribution of Children Sex", x = "Children Sex", y = "Count")
+
+b3 <- tobacco_child_demo %>%
+  na.omit() %>%
+  ggplot(aes(x = language)) + geom_bar(fill = "skyblue3") +
+  scale_x_discrete(labels=c("No", "Yes")) +
+  labs(title = "Distribution of Children Language", x = "Children Language", y = "Count")
+
+b4 <- tobacco_child_demo %>%
+  na.omit() %>%
+  ggplot(aes(x = tethnic)) + geom_bar(fill = "skyblue3") +
+  scale_x_discrete(labels=c("Not Hispanic/Latino", "Hispanic/Latino")) +
+  labs(title = "Distribution of Children Ethnic", x = "Children Ethnic", y = "Count")
+
+
+b5 <- tobacco_child_demo %>%
+  na.omit() %>%
+  ggplot(aes(x = race)) + geom_bar(fill = "skyblue3") +
+  labs(title = "Distribution of Children Race", x = "children Race", y = "Count")
+
+grid.arrange(b1, b2, b3, b4, b5, ncol=2)
+```
+The graph above presents the demographic distributions for children. The age distribution indicates that most children in this study are aged between 12 and 15 years. Few are 16 years old, and none are younger than 12 or older than 16. In terms of gender, there are more male children than females. Regarding language, most children speak the same language at home, with fewer speaking other languages. The ethnicity distribution reveals that the majority are not of Hispanic or Latino descent. Racially, most children are White, with other minorities being less represented. The similarities in language, ethnicity, and race distributions between children and parents suggest that children often inherit or are influenced by their parents' characteristics in these areas.
+
+```{r, echo=FALSE, include=FALSE}
+ tobacco %>%
+   select("parent_id", "mom_smoke_16wk", "mom_smoke_22wk", "mom_smoke_32wk", "cotimean_34wk")
+```
+
+```{r, echo=FALSE, include=FALSE}
+ tobacco %>%
+   select("parent_id", "mom_smoke_pp1", "mom_smoke_pp2", "mom_smoke_pp12wk", "mom_smoke_pp6mo", "cotimean_pp6mo","cotimean_pp6mo_baby", "smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr")
+```
+
+
+```{r, echo=FALSE, include=FALSE}
+tobacco %>%
+   select("cig_ever", "num_cigs_30", "e_cig_ever", "num_e_cigs_30", "mj_ever", "num_mj_30", "alc_ever", "num_alc_30")
+```
+
+
+```{r, echo=FALSE, include=FALSE}
+tobacco %>%
+   select("bpm_att", "bpm_ext", "childasd", "bpm_att_p", "bpm_ext_p", "swan_hyperactive", "swan_inattentive")
+```
+
+
+```{r, echo=FALSE, include=FALSE}
+tobacco %>%
+ select("erq_cog", "erq_exp")
+```
+
+```{r, echo=FALSE, include=FALSE}
+tobacco_exp <- tobacco %>%
+ select("parent_id", "smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr", "mj_ever")
+```
+
+## Prenatal and Postnatal on Substance Use
+
+In this section, we aim to evaluate the effects of Smoke During Pregnancy (SDP) and Environmental Tobacco Smoke (ETS) on adolescent substance use.
+ We first identified the SDP variables as "mom_smoke_16wk", "mom_smoke_22wk", and "mom_smoke_32wk". The ETS variables are identified as "smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", and "smoke_exposure_5yr". For children's substance use, we selected "cig_ever", "e_cig_ever", "mj_ever", and "alc_ever". We opted to use these categorical variables instead of those recording the number of substance uses in the past 30 days due to the significant amount of missing data. 
+
+
+```{r, fig.height=5, fig.width=10, echo=FALSE}
+
+ tobacco_prenatal_mj <- tobacco %>%
+   select("parent_id", "mom_smoke_16wk", "mom_smoke_22wk","mom_smoke_32wk", "mj_ever") %>%
+   pivot_longer(!c(parent_id, mj_ever), names_to = "smoke_prenatal", values_to = "mom_smoking_status") %>%
+   filter(!is.na(mom_smoking_status) & !is.na(mj_ever))
+
+summary_data_mj <- tobacco_prenatal_mj %>%
+  group_by(smoke_prenatal, mom_smoking_status) %>%
+  summarize(mj_ever_num = sum(as.numeric(as.character(mj_ever)) > 0) / n())
+
+p1 <- ggplot(summary_data_mj, aes(x=smoke_prenatal, y = mj_ever_num, fill=mom_smoking_status)) +
+  geom_bar(stat="identity", position=position_dodge()) +
+  scale_color_discrete(name="Prenatal Smoking Status") +
+  scale_x_discrete(labels=c("16wk", "22wk", "32wk")) +
+  geom_text(aes(label=scales::percent(mj_ever_num, accuracy=0.1), y=mj_ever_num + 0.02), 
+            position=position_dodge(width=0.9), vjust=-0.5, size=3) +
+  labs(title="Marijuana Proportion on Prenatal Smoking Period",
+       x="Prenatal Smoking Period", y="Marijuana Proportion")
+
+tobacco_prenatal_cig <-  tobacco %>%
+  select("parent_id", "mom_smoke_16wk", "mom_smoke_22wk","mom_smoke_32wk", "cig_ever") %>%
+  pivot_longer(!c(parent_id, cig_ever), names_to = "smoke_prenatal", values_to = "mom_smoking_status") %>%
+  filter(!is.na(mom_smoking_status) & !is.na(cig_ever))
+
+summary_data_cig <- tobacco_prenatal_cig %>%
+  group_by(smoke_prenatal, mom_smoking_status) %>%
+  summarize(cig_ever_num = sum(as.numeric(as.character(cig_ever)) > 0) / n())
+
+p2 <- ggplot(summary_data_cig, aes(x=smoke_prenatal, y = cig_ever_num, fill=mom_smoking_status)) +
+  geom_bar(stat="identity", position=position_dodge()) +
+  scale_x_discrete(labels=c("16wk", "22wk", "32wk")) +
+  scale_color_discrete(name="Prenatal Smoking Status") +
+  geom_text(aes(label=scales::percent(cig_ever_num, accuracy=0.1), y=cig_ever_num + 0.02), 
+            position=position_dodge(width=0.9), vjust=-0.5, size=3) +
+  labs(title="Cigarette Proportion on Prenatal Smoking Period",
+       x="Prenatal Smoking Period", y="Cigarette Proportion")
+
+tobacco_prenatal_e_cig <-  tobacco %>%
+  select("parent_id", "mom_smoke_16wk", "mom_smoke_22wk","mom_smoke_32wk", "e_cig_ever") %>%
+  pivot_longer(!c(parent_id, e_cig_ever), names_to = "smoke_prenatal", values_to = "mom_smoking_status") %>%
+  filter(!is.na(mom_smoking_status) & !is.na(e_cig_ever))
+
+summary_data_e_cig <- tobacco_prenatal_e_cig %>%
+  group_by(smoke_prenatal, mom_smoking_status) %>%
+  summarize(e_cig_ever_num = sum(as.numeric(as.character(e_cig_ever)) > 0) / n())
+
+p3 <- ggplot(summary_data_e_cig, aes(x=smoke_prenatal, y = e_cig_ever_num, fill=mom_smoking_status)) +
+  geom_bar(stat="identity", position=position_dodge()) +
+  scale_x_discrete(labels=c("16wk", "22wk", "32wk")) +
+  scale_color_discrete(name="Prenatal Smoking Status") +
+  geom_text(aes(label=scales::percent(e_cig_ever_num, accuracy=0.1), y=e_cig_ever_num + 0.02), 
+            position=position_dodge(width=0.9), vjust=-0.5, size=3) +
+  labs(title="E-Cigarette Proportion on Prenatal Smoking Period",
+       x="Prenatal Smoking Period", y="E-Cigarette Proportion")
+
+tobacco_prenatal_alc <-  tobacco %>%
+  select("parent_id", "mom_smoke_16wk", "mom_smoke_22wk","mom_smoke_32wk", "alc_ever") %>%
+  pivot_longer(!c(parent_id, alc_ever), names_to = "smoke_prenatal", values_to = "mom_smoking_status") %>%
+  filter(!is.na(mom_smoking_status) & !is.na(alc_ever))
+
+summary_data_alc <- tobacco_prenatal_alc %>%
+  group_by(smoke_prenatal, mom_smoking_status) %>%
+  summarize(alc_ever_num = sum(as.numeric(as.character(alc_ever)) > 0) / n())
+
+p4 <- ggplot(summary_data_alc, aes(x=smoke_prenatal, y = alc_ever_num, fill=mom_smoking_status)) +
+  geom_bar(stat="identity", position=position_dodge()) +
+  scale_x_discrete(labels=c("16wk", "22wk", "32wk")) +
+  scale_color_discrete(name="Prenatal Smoking Status") +
+  geom_text(aes(label=scales::percent(alc_ever_num, accuracy=0.1), y=alc_ever_num + 0.02), 
+            position=position_dodge(width=0.9), vjust=-0.5, size=3) +
+  labs(title="Alcohol Proportion on Prenatal Smoking Period",
+       x="Prenatal Smoking Period", y="Alcohol Proportion")
+
+
+grid.arrange(p1, p2, p3, p4, ncol=2)
+```
+To explore the impact of Smoking During Pregnancy on children's substance use, we created bar plots depicting the proportion of different substance use across all prenatal smoking periods, from 16 wks to 32wks.
+In the "Marijuana Proportion on Prenatal Smoking Period" graph, we observe that children whose mothers smoked during pregnancy have a substantially higher proportion of marijuana use than those whose mothers did not smoke. This trend is consistent across all prenatal smoking periods. The percentages for mothers who smoked versus those who did not are as follows: 22.2% vs. 3.6% at 16 weeks, 20.0% vs. 4.5% at 22 weeks, and 23.0% vs. 4.2% at 32 weeks. In the "Cigarette Proportion on Prenatal Smoking Period" graph, children of mothers who smoked during pregnancy exhibit high proportions of cigarette use. However, a comparison with children of non-smoking mothers is not feasible due to missing data in this dataset. The "E-Cigarette Proportion on Prenatal Smoking Period" graph shows that the proportion of e-cigarette use is higher for children of mothers who smoked during pregnancy across all periods. Specifically, the percentages are 11.1% vs. 7.1% at 16 weeks, 20.0% vs. 4.5% at 22 weeks, and 12.5% vs. 4.2% at 32 weeks. Finally, in the "Alcohol Proportion on Prenatal Smoking Period" graph, children of mothers who smoked during pregnancy consistently show a higher proportion of alcohol use than their counterparts. The percentages are 25.0% vs. 10.7% at 16 weeks, 33.3% vs. 9.1% at 22 weeks, and 28.6% vs. 12.5% at 32 weeks. In summary, given that the proportions of children's use of marijuana, e-cigarettes, and alcohol are substantially higher for those whose mothers smoked during pregnancy compared to those whose mothers did not, we can infer that maternal smoking during pregnancy is positively associated with children's substance use. However, due to the absence of data on children's cigarette use whose mothers did not smoke during pregnancy, this conclusion requires more rigorous examination in future statistical analyses.
+
+```{r, fig.height=5, fig.width=10, echo=FALSE, include=FALSE}
+tobacco_sev <- tobacco %>%
+  mutate(
+    mom_smoke_16wk = as.numeric(as.character(mom_smoke_16wk)),
+    mom_smoke_22wk = as.numeric(as.character(mom_smoke_22wk)),
+    mom_smoke_32wk = as.numeric(as.character(mom_smoke_32wk))
+  ) %>%
+  mutate(
+    prenatal_sum = ifelse(
+      is.na(mom_smoke_16wk) & is.na(mom_smoke_22wk) & is.na(mom_smoke_32wk),
+      NA,
+      rowSums(select(., mom_smoke_16wk, mom_smoke_22wk, mom_smoke_32wk), na.rm = TRUE)
+    )
+  ) %>%
+  mutate(prenatal_smoker = case_when(
+    prenatal_sum == 0 ~ "Non-Smoker",
+    prenatal_sum > 0 & prenatal_sum < 3 ~ "Light-Smoker",
+    prenatal_sum == 3 ~ "Heavy-Smoker",
+    prenatal_sum == NA ~ "missing",
+    TRUE ~ NA_character_
+  ))
+
+tobacco_sev %>%
+  select("mj_ever", "cig_ever", "e_cig_ever", "alc_ever", "prenatal_smoker") %>%
+  tbl_summary(
+    by = prenatal_smoker, # stratify by prenatal smoker
+    type = all_continuous() ~ "continuous2", # ensure all continuous variables are treated as such
+    missing = "no",
+    statistic = list(
+      all_continuous() ~ "{mean} ({sd})",  # for continuous variables, display mean (SD), missing value
+      all_categorical() ~ "{n} ({p}%)" )) %>%
+  add_p()
+
+```
+
+```{r, fig.height=5, fig.width=10, echo=FALSE}
+
+tobacco_sev_exp <- tobacco %>%
+  mutate(
+    smoke_exposure_6mo = as.numeric(as.character(smoke_exposure_6mo)),
+    smoke_exposure_12mo = as.numeric(as.character(smoke_exposure_12mo)),
+    smoke_exposure_3yr = as.numeric(as.character(smoke_exposure_3yr)),
+    smoke_exposure_4yr = as.numeric(as.character(smoke_exposure_4yr)),
+    smoke_exposure_5yr = as.numeric(as.character(smoke_exposure_5yr))
+  ) %>%
+  mutate(
+    postnatal_sum = ifelse(
+      is.na(smoke_exposure_6mo) & is.na(smoke_exposure_12mo) & is.na(smoke_exposure_3yr) & is.na(smoke_exposure_4yr)
+      & is.na(smoke_exposure_5yr),
+      NA,
+      rowSums(select(., smoke_exposure_6mo, smoke_exposure_12mo, smoke_exposure_3yr, smoke_exposure_4yr, smoke_exposure_5yr), na.rm = TRUE)
+    )
+  ) %>%
+  mutate(postnatal_exposure = case_when(
+    postnatal_sum == 0 ~ "Non Exposure", # changed prenatal_sum to postnatal_sum
+    postnatal_sum > 0 & postnatal_sum < 3 ~ "Moderate Exposure",
+    postnatal_sum >= 3 ~ "High Exposure",
+    TRUE ~ NA_character_
+  ))
+
+tobacco_postpartum_mj <- tobacco %>%
+  select("parent_id", "smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr", "mj_ever") %>%
+  pivot_longer(!c(parent_id, mj_ever), names_to = "smoke_postpartum", values_to = "exposured_status") %>%
+  filter(!is.na(exposured_status) & !is.na(mj_ever))
+
+levels_order <- c("smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr")
+
+tobacco_postpartum_mj$smoke_postpartum <- factor(tobacco_postpartum_mj$smoke_postpartum, levels = levels_order)
+
+summary_data_mj <- tobacco_postpartum_mj  %>%
+  group_by(smoke_postpartum, exposured_status) %>%
+  summarize(mj_ever_num = sum(as.numeric(as.character(mj_ever)) > 0) / n())
+
+b1 <-ggplot(summary_data_mj, aes(x=smoke_postpartum, y = mj_ever_num, fill=exposured_status)) +
+      geom_bar(stat="identity", position=position_dodge()) +
+      scale_x_discrete(labels=c("6mo", "12mo", "2yr", "3yr", "4yr", "5yr")) +
+      geom_text(aes(label=scales::percent(mj_ever_num, accuracy=0.1), y=mj_ever_num + 0.02), 
+            position=position_dodge(width=0.9), vjust=-0.5, size=3) +
+      labs(title="Marijuana Proportion on Postnatal Exposure Period",
+           x="Postnatal Exposure Period", y="Marijuana Proportion")
+
+tobacco_postpartum_cig <- tobacco %>%
+  select("parent_id", "smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr", "cig_ever") %>%
+  pivot_longer(!c(parent_id, cig_ever), names_to = "smoke_postpartum", values_to = "exposured_status") %>%
+  filter(!is.na(exposured_status) & !is.na(cig_ever))
+
+levels_order <- c("smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr")
+
+tobacco_postpartum_cig$smoke_postpartum <- factor(tobacco_postpartum_cig$smoke_postpartum, levels = levels_order)
+
+summary_data_cig <- tobacco_postpartum_cig  %>%
+  group_by(smoke_postpartum, exposured_status) %>%
+  summarize(cig_ever_num = sum(as.numeric(as.character(cig_ever)) > 0) / n())
+
+b2 <- ggplot(summary_data_cig, aes(x=smoke_postpartum, y = cig_ever_num, fill=exposured_status)) +
+        geom_bar(stat="identity", position=position_dodge()) +
+        scale_x_discrete(labels=c("6mo", "12mo", "2yr", "3yr", "4yr", "5yr")) +
+        geom_text(aes(label=scales::percent(cig_ever_num, accuracy=0.1), y=cig_ever_num + 0.02), 
+            position=position_dodge(width=0.9), vjust=-0.5, size=3) +
+        labs(title="Cigarette Proportion on Postnatal Exposure Period",
+             x="Postnatal Exposure Period", y="Cigarette Proportion")
+
+tobacco_postpartum_e_cig <- tobacco %>%
+  select("parent_id", "smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr", "e_cig_ever") %>%
+  pivot_longer(!c(parent_id, e_cig_ever), names_to = "smoke_postpartum", values_to = "exposured_status") %>%
+  filter(!is.na(exposured_status) & !is.na(e_cig_ever))
+
+levels_order <- c("smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr")
+
+tobacco_postpartum_e_cig$smoke_postpartum <- factor(tobacco_postpartum_e_cig$smoke_postpartum, levels = levels_order)
+
+summary_data_e_cig <- tobacco_postpartum_e_cig  %>%
+  group_by(smoke_postpartum, exposured_status) %>%
+  summarize(e_cig_ever_num = sum(as.numeric(as.character(e_cig_ever)) > 0) / n())
+
+b3 <- ggplot(summary_data_e_cig, aes(x=smoke_postpartum, y = e_cig_ever_num, fill=exposured_status)) +
+        geom_bar(stat="identity", position=position_dodge()) +
+        scale_x_discrete(labels=c("6mo", "12mo", "2yr", "3yr", "4yr", "5yr")) +
+        geom_text(aes(label=scales::percent(e_cig_ever_num, accuracy=0.1), y=e_cig_ever_num + 0.02), 
+            position=position_dodge(width=0.9), vjust=-0.5, size=3) +
+        labs(title="E-Cigarette Proportion on Postnatal Exposure Period",
+             x="Postnatal Exposure Period", y="E-Cigarette Proportion")
+
+
+tobacco_postpartum_alc <- tobacco %>%
+  select("parent_id", "smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr", "alc_ever") %>%
+  pivot_longer(!c(parent_id, alc_ever), names_to = "smoke_postpartum", values_to = "exposured_status") %>%
+  filter(!is.na(exposured_status) & !is.na(alc_ever))
+
+levels_order <- c("smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr")
+
+tobacco_postpartum_alc$smoke_postpartum <- factor(tobacco_postpartum_alc$smoke_postpartum, levels = levels_order)
+
+summary_data_alc <- tobacco_postpartum_alc  %>%
+  group_by(smoke_postpartum, exposured_status) %>%
+  summarize(alc_ever_num = sum(as.numeric(as.character(alc_ever)) > 0) / n())
+
+b4 <- ggplot(summary_data_alc, aes(x=smoke_postpartum, y = alc_ever_num, fill=exposured_status)) +
+        geom_bar(stat="identity", position=position_dodge()) +
+        scale_x_discrete(labels=c("6mo", "12mo", "2yr", "3yr", "4yr", "5yr")) +
+        geom_text(aes(label=scales::percent(alc_ever_num, accuracy=0.1), y=alc_ever_num + 0.02), 
+            position=position_dodge(width=0.9), vjust=-0.5, size=3) +
+        labs(title="Alcohol Proportion on Postnatal Exposure Period",
+             x="Postnatal Exposure Period", y="Alcohol Proportion")
+
+grid.arrange(b1, b2, b3, b4, ncol=2)
+```
+To explore the impact of Environmental Tobacco Smoke (ETS) exposure on children's substance use, we created bar plots depicting the proportion of different substance use across all postnatal exposure periods, from 6 months to 5 years.
+For both the "Marijuana Proportion based on Postnatal Exposure Period" and the "Cigarette Proportion based on Postnatal Exposure Period" graphs, all data points representing children's marijuana that were exposed to use Environmental Tobacco Smoke are missing. Consequently, we cannot compare the marijuana use proportions between children exposed to maternal smoking during pregnancy and those not exposed across all postnatal periods. In the "E-cigarette Proportion based on Postnatal Exposure Period" graph, children's e-cigarette use proportions during periods of ETS exposure are slightly higher than those during periods without exposure. The "Alcohol Proportion based on Postnatal Exposure Period" graph reveals some interesting patterns: During the 6-month and 12-month exposure periods, children exposed to ETS have a higher alcohol use proportion than those not exposed. However, for the 2-year, 3-year, 4-year, and 5-year exposure periods, children exposed to ETS have a lower alcohol use proportion than those not exposed. In summary, given the missing values in the marijuana and cigarette graphs, the marginally higher e-cigarette proportions among exposed children, and the alternating patterns in alcohol proportions, we cannot conclusively determine any relationship between ETS exposure and children's substance use.
+
+
+```{r, fig.height=5, fig.width=10, echo=FALSE, include=FALSE}
+tobacco_sev_exp %>%
+  select("mj_ever", "cig_ever", "e_cig_ever", "alc_ever", "postnatal_exposure") %>%
+  tbl_summary(
+    by = postnatal_exposure, # stratify by prenatal smoker
+    type = all_continuous() ~ "continuous2", # ensure all continuous variables are treated as such
+    missing = "no",
+    statistic = list(
+      all_continuous() ~ "{mean} ({sd})",  # for continuous variables, display mean (SD), missing value
+      all_categorical() ~ "{n} ({p}%)" )) %>%
+  add_p()
+```
+
+
+
+## Prenatal and Environmental Tobacco Smoke on Children's Externalizing Behavior
+
+In this section, we aimed to examine the relationship between Smoking During Pregnancy and Environmental Tobacco Smoke on Children's Externalizing Behavior. First, we identified those Externalizing behaviors: bpm_att", "bpm_ext", "bpm_att_p", "bpm_ext_p", "swan_hyperactive" and "swan_inattentive".
+
+```{r, fig.height=4, fig.width=10, echo=FALSE, include=FALSE}
+c1 <- tobacco %>%
+  ggplot() +
+  geom_density(aes(x=bpm_att, fill = "bpm_att"), alpha = 0.5) +
+  geom_density(aes(x=bpm_att_p, fill = "bpm_att_p"), alpha = 0.5) +
+  labs(fill = "Variable") +
+  scale_fill_manual(values = c(bpm_att = "pink3", bpm_att_p = "skyblue2")) +
+  labs(title="Distribution of BPM Score on Attention Problem",
+              x = "Brief Problem Monitor Score on Attention Problem") +
+  theme_minimal()
+
+c2 <- tobacco %>%
+  ggplot() +
+  geom_density(aes(x=bpm_ext, fill = "bpm_ext"), alpha = 0.5) +
+  geom_density(aes(x=bpm_ext_p, fill = "bpm_ext_p"), alpha = 0.5) +
+  labs(fill = "Variable") +
+  scale_fill_manual(values = c(bpm_ext = "pink3", bpm_ext_p = "skyblue2")) +
+  labs(title="Distribution of BPM Score on Externalizing Problem",
+              x = "Brief Problem Monitor Score on Externalizing Problem") +
+  theme_minimal()
+grid.arrange(c1, c2, nrow = 1)
+```
+
+When comparing the bmp scores from parents and children in the dataset, we observed that parents typically report lower scores when assessing their children's attention and externalizing problems than the scores children report for themselves. To account for this discrepancy, we introduced two new variables: **bmp_ext_combined** and **bmp_att_combined**. Given that the dataset includes variables that record the Brief Problem Monitor for Attention Problems and the Brief Problem Monitor for Externalizing Problems from both parents and adolescents, we calculated the average scores of bmp_ext and bmp_att for both children and mothers. These averaged scores were defined as **bmp_ext_combined** and **bmp_att_combined**.
+
+```{r, fig.height=5, fig.width=10, echo=FALSE}
+tobacco <- tobacco %>%
+  mutate(bpm_att = as.numeric(as.character(bpm_att)), bpm_att_p = as.numeric(as.character(bpm_att_p)), bpm_ext = as.numeric(as.character(bpm_ext)), bpm_exp_p = as.numeric(as.character(bpm_ext_p))) %>%
+  mutate(bpm_att_combined = rowMeans(cbind(bpm_att, bpm_att_p), na.rm = TRUE), 
+         bpm_ext_combined = rowMeans(cbind(bpm_ext, bpm_ext_p), na.rm = TRUE))
+
+ tobacco_prenatal_att <- tobacco %>%
+   select("parent_id", "mom_smoke_16wk", "mom_smoke_22wk","mom_smoke_32wk", "bpm_att_combined") %>%
+   pivot_longer(!c(parent_id, bpm_att_combined), names_to = "smoke_prenatal", values_to = "prenatal_smoking_status") %>%
+   filter(!is.na(prenatal_smoking_status) & !is.na(bpm_att_combined))
+
+c1 <- ggplot(tobacco_prenatal_att, aes(x=smoke_prenatal, y = bpm_att_combined, fill = prenatal_smoking_status))+
+        geom_boxplot() +
+        stat_summary(fun=mean, geom="point", shape=18, size=3, position=position_dodge(width=0.75)) + # Add mean points
+        scale_x_discrete(labels=c("16wk", "22wk", "32wk")) +
+        scale_color_discrete(name="Prenatal Smoking Status") +
+        labs(title="Distribution of Combined BPM on Attention",
+              x="Prental Smoking Period", y="Brief Problem Monitor on Attention Problem")
+
+ tobacco_prenatal_ext <- tobacco %>%
+   select("parent_id", "mom_smoke_16wk", "mom_smoke_22wk","mom_smoke_32wk", "bpm_ext_combined") %>%
+   pivot_longer(!c(parent_id, bpm_ext_combined), names_to = "smoke_prenatal", values_to = "prenatal_smoking_status") %>%
+   filter(!is.na(prenatal_smoking_status) & !is.na(bpm_ext_combined))
+ 
+c2 <- ggplot(tobacco_prenatal_ext, aes(x=smoke_prenatal, y = bpm_ext_combined, fill = prenatal_smoking_status))+
+        geom_boxplot() +
+        stat_summary(fun=mean, geom="point", shape=18, size=3, position=position_dodge(width=0.75)) + # Add mean points
+        scale_x_discrete(labels=c("16wk", "22wk", "32wk")) +
+        scale_color_discrete(name="Prenatal Smoking Status") +
+         labs(title="Distribution of Combined BPM on Externalizing",
+              x="Prenatal Smoking Period", y="Brief Problem Monitor on Externalizing Problem")
+
+ tobacco_prenatal_hyperactive <- tobacco %>%
+   select("parent_id", "mom_smoke_16wk", "mom_smoke_22wk","mom_smoke_32wk", "swan_hyperactive") %>%
+   pivot_longer(!c(parent_id, swan_hyperactive), names_to = "smoke_prenatal", values_to = "prenatal_smoking_status") %>%
+   filter(!is.na(prenatal_smoking_status) & !is.na(swan_hyperactive))
+
+c3 <- ggplot(tobacco_prenatal_hyperactive, aes(x=smoke_prenatal, y = swan_hyperactive, fill = prenatal_smoking_status))+
+  geom_boxplot() +
+  stat_summary(fun=mean, geom="point", shape=18, size=3, position=position_dodge(width=0.75)) + # Add mean points
+  scale_x_discrete(labels=c("16wk", "22wk", "32wk")) +
+  scale_color_discrete(name="Prenatal Smoking Status") +
+  labs(title="Distribution of swan_hyperactive",
+        x="Prenatal Smoking Period", y="ADHD-Hyperactive SWAN Rating Score")
+
+ tobacco_prenatal_inattentive <- tobacco %>%
+   select("parent_id", "mom_smoke_16wk", "mom_smoke_22wk","mom_smoke_32wk", "swan_inattentive") %>%
+   pivot_longer(!c(parent_id, swan_inattentive), names_to = "smoke_prenatal", values_to = "prenatal_smoking_status") %>%
+   filter(!is.na(prenatal_smoking_status) & !is.na(swan_inattentive))
+
+c4 <- ggplot(tobacco_prenatal_inattentive, aes(x=smoke_prenatal, y = swan_inattentive, fill = prenatal_smoking_status))+
+    geom_boxplot() +
+   stat_summary(fun=mean, geom="point", shape=18, size=3, position=position_dodge(width=0.75)) + # Add mean points
+   scale_x_discrete(labels=c("16wk", "22wk", "32wk")) +
+   scale_color_discrete(name="Prenatal Smoking Status") +
+   labs(title="Distribution of swan_inattentive",
+        x="Prenatal Smoking Period", y="ADHD-Inattentive SWAN Rating Score")
+
+grid.arrange(c1, c2, c3, c4, ncol=2)
+
+```
+To assess the impact of Smoking During Pregnancy (SDP) on Children's Externalizing Behavior, we used boxplots to depict the distributions of BMP scores for attention and externalizing problems, and SWAN scores for hyperactive and inattentive issues. In the distribution of the combined BMP on attention problems, both the median and mean scores for children whose mothers smoked during pregnancy are noticeably higher than for those whose mothers did not smoke. For the distribution of the combined BMP on externalizing problems, the median score for children of mothers who smoked during pregnancy is visibly higher, although the mean is only slightly elevated compared to those whose mothers did not smoke. In the distribution of the SWAN score for ADHD Hyperactivity, both the median and mean scores for children of smoking mothers are noticeably higher than for those of non-smoking mothers. For the SWAN score on ADHD Inattentiveness, the median for children of smokers is visibly higher, but the mean differs only slightly from children of non-smokers. Overall, the data suggests that SDP is positively associated with children's externalizing behavior. However, given the similar means in the combined BMP for externalizing problems and SWAN for inattentiveness between the two groups, this positive association needs further validation in subsequent studies.
+
+```{r, fig.height=5, fig.width=10, echo = FALSE}
+tobacco_postpartum_bpm_att <- tobacco %>%
+  select("parent_id", "smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr", "bpm_att_combined") %>%
+  pivot_longer(!c(parent_id, bpm_att_combined), names_to = "smoke_postpartum", values_to = "postnatal_exposure") %>%
+  filter(!is.na(postnatal_exposure) & !is.na(bpm_att_combined))
+
+levels_order <- c("smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr")
+
+tobacco_postpartum_bpm_att$smoke_postpartum <- factor(tobacco_postpartum_bpm_att$smoke_postpartum, levels = levels_order)
+
+d1 <-ggplot(tobacco_postpartum_bpm_att, aes(x=smoke_postpartum, y = bpm_att_combined, fill=postnatal_exposure)) +
+       geom_boxplot() +
+       stat_summary(fun=mean, geom="point", shape=18, size=3, position=position_dodge(width=0.75)) + # Add mean points
+       scale_x_discrete(labels=c("6mo", "12mo", "2yr", "3yr", "4yr", "5yr")) +
+       scale_color_discrete(name="Postnatal Exposure Status") +
+       labs(title="Distribution of Combined BPM on Attention",
+              x="Postnatal Exposure Period", y="Brief Problem Monitor on Attention Problem")
+
+tobacco_postpartum_bpm_ext <- tobacco %>%
+  select("parent_id", "smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr", "bpm_ext_combined") %>%
+  pivot_longer(!c(parent_id, bpm_ext_combined), names_to = "smoke_postpartum", values_to = "postnatal_exposure") %>%
+  filter(!is.na(postnatal_exposure) & !is.na(bpm_ext_combined))
+
+levels_order <- c("smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr")
+
+tobacco_postpartum_bpm_ext$smoke_postpartum <- factor(tobacco_postpartum_bpm_att$smoke_postpartum, levels = levels_order)
+
+d2 <-ggplot(tobacco_postpartum_bpm_ext, aes(x=smoke_postpartum, y = bpm_ext_combined, fill=postnatal_exposure)) +
+       geom_boxplot() +
+       stat_summary(fun=mean, geom="point", shape=18, size=3, position=position_dodge(width=0.75)) + # Add mean points
+       scale_x_discrete(labels=c("6mo", "12mo", "2yr", "3yr", "4yr", "5yr")) +
+       scale_color_discrete(name="Postnatal Exposure Status") +
+       labs(title="Distribution of Combined BPM on Externalizing",
+              x="Postnatal Exposure Period", y="Brief Problem Monitor on Externalizing Problem")
+
+tobacco_postpartum_hyperactive <- tobacco %>%
+  select("parent_id", "smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr", "swan_hyperactive") %>%
+  pivot_longer(!c(parent_id, swan_hyperactive), names_to = "smoke_postpartum", values_to = "postnatal_exposure") %>%
+  filter(!is.na(postnatal_exposure) & !is.na(swan_hyperactive))
+
+levels_order <- c("smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr")
+
+tobacco_postpartum_hyperactive$smoke_postpartum <- factor(tobacco_postpartum_hyperactive$smoke_postpartum, levels = levels_order)
+
+d3 <-ggplot(tobacco_postpartum_hyperactive, aes(x=smoke_postpartum, y = swan_hyperactive, fill=postnatal_exposure)) +
+       geom_boxplot() +
+       stat_summary(fun=mean, geom="point", shape=18, size=3, position=position_dodge(width=0.75)) + # Add mean points
+       scale_x_discrete(labels=c("6mo", "12mo", "2yr", "3yr", "4yr", "5yr")) +
+       scale_color_discrete(name="Postnatal Exposure Status") +
+       labs(title="Distribution of SWAN hyperactive",
+              x="Postnatal Exposure Period", y="ADHD-Hyperactive SWAN Rating Score")
+
+tobacco_postpartum_inattentive <- tobacco %>%
+  select("parent_id", "smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr", "swan_inattentive") %>%
+  pivot_longer(!c(parent_id, swan_inattentive), names_to = "smoke_postpartum", values_to = "postnatal_exposure") %>%
+  filter(!is.na(postnatal_exposure) & !is.na(swan_inattentive))
+
+levels_order <- c("smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr")
+
+tobacco_postpartum_inattentive$smoke_postpartum <- factor(tobacco_postpartum_inattentive$smoke_postpartum, levels = levels_order)
+
+d4 <-ggplot(tobacco_postpartum_inattentive, aes(x=smoke_postpartum, y = swan_inattentive, fill=postnatal_exposure)) +
+       geom_boxplot() +
+       stat_summary(fun=mean, geom="point", shape=18, size=3, position=position_dodge(width=0.75)) + # Add mean points
+       scale_x_discrete(labels=c("6mo", "12mo", "2yr", "3yr", "4yr", "5yr")) +
+       scale_color_discrete(name="Postnatal Exposure Status") +
+       labs(title="Distribution of SWAN inattentive",
+              x="Postnatal Exposure Period", y="ADHD-inattentive SWAN Rating Score")
+
+grid.arrange(d1, d2, d3, d4, ncol=2)
+```
+To assess the impact of Environmental Tobacco Smoke (ETS) on Children's Externalizing Behavior, we used boxplots to illustrate the distributions of BMP scores for attention and externalizing problems, as well as SWAN scores for hyperactivity and inattentiveness.In the distribution of the combined BMP for attention problems during postnatal exposure periods, both the median and mean scores for children exposed to environmental smoke were slightly higher than those not exposed, notably during the 6-month, 2-year, 3-year, 4-year, and 5-year periods. However, during the 12-month period, both metrics were similar for both groups. For the distribution of the combined BMP on externalizing problems, both the median and mean scores for children exposed to environmental smoke were somewhat elevated compared to those who weren't, across all postnatal exposure periods. In the distribution of the SWAN score for ADHD Hyperactivity, the median and mean scores for children exposed to environmental smoke alternated in similarity with those not exposed. Similarly, for the SWAN scores on ADHD Inattentiveness, the metrics for children exposed to smoke were intermittently similar to those not exposed. Overall, the data does not indicate a definitive relationship between ETS and children's externalizing behavior, given the similarities in the mean and median scores of BMP for attention and externalizing problems, and SWAN scores for hyperactivity and inattentiveness, between the exposed and non-exposed groups across various postnatal periods.
+
+```{r, fig.height=5, fig.width=10, echo=FALSE}
+e1 <- tobacco_sev %>%
+  filter(!is.na(prenatal_smoker)) %>%
+  ggplot(aes(x=swan_hyperactive, y=swan_inattentive, color = prenatal_smoker)) + 
+      geom_vline(aes(xintercept=6), linetype="dashed", color="red") + 
+      geom_hline(aes(yintercept=6), linetype="dashed", color="red") + 
+      geom_point(size=2) +
+      labs(title="SWAN Inattentive v.s. SWAN Hyperactive by Prenatal Smoking Status",
+            x="ADHD-Hyperactive SWAN Rating Score", y="ADHD-Inattentive SWAN Rating Score") +
+      scale_color_discrete(name="Prenatal Smoking Status") +
+      theme_minimal()
+
+e2 <- tobacco_sev_exp %>%
+  filter(!is.na(postnatal_exposure)) %>%
+  ggplot(aes(x=swan_hyperactive, y=swan_inattentive, color = postnatal_exposure)) + 
+      geom_vline(aes(xintercept=6), linetype="dashed", color="red") + 
+      geom_hline(aes(yintercept=6), linetype="dashed", color="red") + 
+      geom_point(size=2) +
+      labs(title="SWAN Inattentive v.s. SWAN Hyperactive by Postnatal Exposure Status",
+            x="ADHD-Hyperactive SWAN Rating Score", y="ADHD-Inattentive SWAN Rating Score") +
+      scale_color_discrete(name="Postnatal Exposure Status") +
+      theme_minimal()
+
+grid.arrange(e1, e2, nrow = 1, ncol = 2)
+```
+Before delving into the analysis, we introduced two severity variables. The first one, **prenatal_smoker**, is categorized as follows: *Non-Smoker* if the parent did not smoke at any point during the recorded period from 16 weeks to 32 weeks; *Light-Smoker* if their accumulated responses from 16 weeks to 32 weeks fall within the open interval (0,3); *Heavy Smoker* if they self-reported smoking during all three periods." The second one, *postnatal_exposure* is categorized as follows: *Non Exposure* if the child did not exposure to smoke from parents or other people during the recorded period from 6 months to 5 years; *Moderate Exposure* if their accumulated responses from 6 months to 5 years fall within the open interval (0,3); *High Exposure* if the Child exposed more than 3 times during these period.
+
+Note that a score of 6 or greater indicates the child is likely ADHD-Hyperactive/Impulsive type, and a score of 6 or greater suggests the child is likely ADHD-Inattentive type. In the first scatterplot during prenatal period, between SWAN scores of ADHD hyperactive and ADHD inattentive, we observe that most of the "Heavy Smokers" cluster above both the Hyperactive and Inattentive score thresholds of 6. All "Light Smokers" cluster at or above the Hyperactive and Inattentive score of 6, while "Non-Smokers" are randomly distributed across all scores. In the second graph during postnatal period, it is challenging to distinguish between "Non Exposure", "Moderate Exposure", and "High Exposure" as the points are distributed across all scores.
+
+## Prenatal and Environmental Tobacco Smoke on Children's Self-Regulation
+
+In this section, we aimed to examine the relationship between Smoking During Pregnancy and Environmental Tobacco Smoke on Children's Self-Regulation. We first identified the Self-Regulation Variables as:"erq_cog" and "erq_exp". Just note that a higher ERQ score on Cognitive Reappraisal means the children have better emotional well-being, more positive interpersonal functioning, and greater overall psychological health, while a higher ERQ score on Expressive Suppression linked to poorer emotional well-being, reduced personal relationships quality, and other negative psychological outcomes.
+
+```{r, fig.height=5, fig.width=10, echo=FALSE}
+tobacco_prenatal_erq_cog <- tobacco %>%
+   select("parent_id", "mom_smoke_16wk", "mom_smoke_22wk","mom_smoke_32wk", "erq_cog") %>%
+   pivot_longer(!c(parent_id, erq_cog), names_to = "smoke_prenatal", values_to = "prenatal_smoking_status") %>%
+   filter(!is.na(prenatal_smoking_status))
+
+f1 <- ggplot(tobacco_prenatal_erq_cog, aes(x=smoke_prenatal, y = erq_cog, fill = prenatal_smoking_status))+
+        geom_boxplot() +
+        stat_summary(fun=mean, geom="point", shape=18, size=3, position=position_dodge(width=0.75)) + # Add mean points
+        scale_x_discrete(labels=c("16wk", "22wk", "32wk")) +
+        scale_color_discrete(name="Prenatal Smoking Status") +
+        labs(title="Distribution of ERQ Score on Cognitive Reappraisal",
+              x="Prenatal Smoking Period", y="ERQ Score on Cognitive Reappraisal")
+
+tobacco_prenatal_erq_exp <- tobacco %>%
+   select("parent_id", "mom_smoke_16wk", "mom_smoke_22wk","mom_smoke_32wk", "erq_exp") %>%
+   pivot_longer(!c(parent_id, erq_exp), names_to = "smoke_prenatal", values_to = "prenatal_smoking_status") %>%
+   filter(!is.na(prenatal_smoking_status))
+
+f2 <- ggplot(tobacco_prenatal_erq_exp, aes(x=smoke_prenatal, y = erq_exp, fill = prenatal_smoking_status))+
+        geom_boxplot() +
+        stat_summary(fun=mean, geom="point", shape=18, size=3, position=position_dodge(width=0.75)) + # Add mean points
+        scale_x_discrete(labels=c("16wk", "22wk", "32wk")) +
+        scale_color_discrete(name="Prenatal Smoking Status") +
+        labs(title="Distribution of ERQ Score on Expressive Suppression",
+              x="Prenatal Smoking Period", y="ERQ Score on Expressive Suppression")
+
+grid.arrange(f1, f2, nrow = 1)
+```
+To assess the influence of Smoking During Pregnancy (SDP) on Children's Self-Regulation, we utilized box plots to depict the distribution of ERQ scores for Cognitive Reappraisal and Expressive Suppression. In the distribution for the ERQ score on Cognitive Reappraisal, we observed that the median score for children whose mothers smoked during pregnancy was consistently lower than for those whose mothers did not smoke across all prenatal periods. Conversely, the mean score for children of smoking mothers was consistently higher than for those of non-smoking mothers throughout all prenatal periods. When examining the distribution of the ERQ Score on Expressive Suppression, both the median and mean scores for children of smoking mothers were consistently higher compared to children of non-smoking mothers across all prenatal periods. Given these observations, it is challenging to confirm a relationship between SDP and Children's Self-Regulation based on this graph, especially considering the contrasting patterns in the mean and median scores for Cognitive Reappraisal across prenatal periods.
+
+
+```{r, fig.height=5, fig.width=10, echo=FALSE}
+tobacco_postpartum_erq_cog <- tobacco %>%
+  select("parent_id", "smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr", "erq_cog") %>%
+  pivot_longer(!c(parent_id, erq_cog), names_to = "smoke_postpartum", values_to = "postnatal_exposure") %>%
+  filter(!is.na(postnatal_exposure) & !is.na(erq_cog))
+
+levels_order <- c("smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr")
+
+tobacco_postpartum_erq_cog$smoke_postpartum <- factor(tobacco_postpartum_erq_cog$smoke_postpartum, levels = levels_order)
+
+g1 <-ggplot(tobacco_postpartum_erq_cog, aes(x=smoke_postpartum, y = erq_cog, fill=postnatal_exposure)) +
+       geom_boxplot() +
+       stat_summary(fun=mean, geom="point", shape=18, size=3, position=position_dodge(width=0.75)) + # Add mean points
+       scale_x_discrete(labels=c("6mo", "12mo", "2yr", "3yr", "4yr", "5yr")) +
+       scale_color_discrete(name="Postnatal Exposure Status") +
+       labs(title="Distribution of ERQ Score on Cognitive Reappraisal",
+              x="Postnatal Exposure Period", y="Emotion Regulation Questionairre Score on Cognitive Reappraisal")
+
+tobacco_postpartum_erq_exp <- tobacco %>%
+  select("parent_id", "smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr", "erq_exp") %>%
+  pivot_longer(!c(parent_id, erq_exp), names_to = "smoke_postpartum", values_to = "postnatal_exposure") %>%
+  filter(!is.na(postnatal_exposure) & !is.na(erq_exp))
+
+levels_order <- c("smoke_exposure_6mo", "smoke_exposure_12mo", "smoke_exposure_2yr", "smoke_exposure_3yr", "smoke_exposure_4yr", "smoke_exposure_5yr")
+
+tobacco_postpartum_erq_exp$smoke_postpartum <- factor(tobacco_postpartum_erq_exp$smoke_postpartum, levels = levels_order)
+
+g2 <-ggplot(tobacco_postpartum_erq_exp, aes(x=smoke_postpartum, y = erq_exp, fill=postnatal_exposure)) +
+       geom_boxplot() +
+       stat_summary(fun=mean, geom="point", shape=18, size=3, position=position_dodge(width=0.75)) + # Add mean points
+       scale_x_discrete(labels=c("6mo", "12mo", "2yr", "3yr", "4yr", "5yr")) +
+       scale_color_discrete(name="Postnatal Exposure Status") +
+       labs(title="Distribution of ERQ Score on Expressive Suppression",
+              x="Postnatal Exposure Period", y="Emotion Regulation Questionairre Score on Expressive Suppression")
+
+grid.arrange(g1, g2, nrow = 1, ncol = 2)
+```
+To assess the influence of Environmental Tobacco Smoke (ETS) on Children's Self-Regulation, we utilized box plots to illustrate the distribution of ERQ scores for Cognitive Reappraisal and Expressive Suppression. In the distribution of the ERQ score on Cognitive Reappraisal, we noted that the median score for children exposed to environmental smoke was consistently lower than for those not exposed across all postnatal exposure periods. However, the mean score for children exposed to environmental smoke was consistently higher than for those not exposed throughout all postnatal periods. When examining the distribution of the ERQ Score on Expressive Suppression, both the median and mean scores for children exposed to environmental smoke were consistently higher compared to children not exposed across all postnatal periods. Given these findings, it is challenging to establish a definitive relationship between ETS and Children's Self-Regulation based on this graph, particularly given the contrasting trends observed in the mean and median scores for Cognitive Reappraisal across postnatal exposure periods.
+
+## Conclusion
+
+On the prenatal side, children whose mothers smoked during pregnancy exhibited higher rates of marijuana, e-cigarette, and alcohol use. This suggests a positive association between maternal smoking and children's substance use. However, the absence of comprehensive data on children's cigarette use requires the need for further rigorous analysis. Additionally, while prenatal smoking seems to influence children's externalizing behaviors, certain measured variables, such as the combined BMP for externalizing problems and SWAN for inattentiveness, show very small differences. These patterns highlight the need for more in-depth studies. On the postnatal side, the data does not conclusively demonstrate a consistent impact of ETS on children's substance use, externalizing behaviors, or self-regulation. This is especially when given the mixed trends in scores across various measured variables and periods, as well as significant missing in the data. The dataset in this study presents several limitations that may impact the robustness and generalizability of the findings. One major limitation is the small sample size. Smaller datasets can reduce the statistical power of tests, making it difficult to detect true effect. This essentially means that even if there is a real effect or association, the limited data might not capture it. Another significant concern is the substantial amount of missingness in the variables. Missing data can introduce bias, especially if the missingness is not random. Researchers should be cautious of these two limitations when using this data for statistical analysis.
+
+ 
+```{r, fig.height=5, fig.width=10, echo = FALSE, include=FALSE}
+# code that did not show in the report
+h1 <- tobacco_sev %>%
+  filter(!is.na(prenatal_smoker)) %>%
+  ggplot(aes(x=erq_cog, y=erq_exp, color = prenatal_smoker)) + 
+      geom_point(size=2) +
+      labs(title="ERQ on Cognitive Reappraisal v.s. ERQ on Expressive Suppression by Prenatal Smoking Status",
+            x="ERQ on Cognitive Reappraisal", y="ERQ on Expressive Suppression") +
+      scale_color_discrete(name="Prenatal Smoking Status") +
+      theme_minimal()
+
+h2 <- tobacco_sev_exp %>%
+  filter(!is.na(postnatal_exposure)) %>%
+  ggplot(aes(x=erq_cog, y=erq_exp, color = postnatal_exposure)) + 
+      geom_point(size=2) +
+      labs(title="ERQ on Cognitive Reappraisal v.s. ERQ on Expressive Suppression by Postnatal Exposure Status",
+            x="ERQ on Cognitive Reappraisal", y="ERQ on Expressive Suppression") +
+      scale_color_discrete(name="Postnatal Exposure Status") +
+      theme_minimal()
+
+grid.arrange(h1, h2, nrow = 1, ncol = 2)
+```
+```{r, echo=FALSE, include=FALSE}
+tobacco_sev_exp %>%
+   filter(!is.na(postnatal_exposure)) %>%
+ggplot(aes(x=postnatal_exposure, y=bpm_att_p)) +
+  geom_boxplot()
+tobacco_sev_exp %>%
+   filter(!is.na(postnatal_exposure)) %>%
+ggplot(aes(x=postnatal_exposure, y=bpm_ext_p)) +
+  geom_boxplot()
+tobacco_sev_exp %>%
+   filter(!is.na(postnatal_exposure)) %>%
+ggplot(aes(x=postnatal_exposure, y=bpm_att)) +
+  geom_boxplot()
+tobacco_sev_exp %>%
+   filter(!is.na(postnatal_exposure)) %>%
+ggplot(aes(x=postnatal_exposure, y=bpm_ext)) +
+  geom_boxplot()
+
+tobacco %>%
+  filter(!is.na(mj_ever)) %>%
+ggplot(aes(x=mj_ever, y=cotimean_34wk, fill=mj_ever)) +
+  geom_boxplot()
+
+tobacco %>%
+  filter(!is.na(cig_ever)) %>%
+ggplot(aes(x=cig_ever, y=cotimean_34wk, fill=cig_ever)) +
+  geom_boxplot()
+
+tobacco %>%
+  filter(!is.na(e_cig_ever)) %>%
+ggplot(aes(x=e_cig_ever, y=cotimean_34wk, fill=e_cig_ever)) +
+  geom_boxplot()
+
+tobacco %>%
+  filter(!is.na(alc_ever)) %>%
+ggplot(aes(x=alc_ever, y=cotimean_34wk, fill=alc_ever)) +
+  geom_boxplot()
+
+summary_data_mj <- tobacco_sev %>%
+  group_by(prenatal_smoker) %>%
+  filter(!is.na(prenatal_smoker)) %>%
+  summarize(mj_ever_num = sum(as.numeric(as.character(mj_ever)) > 0 , na.rm = TRUE) / n())
+p1 <- ggplot(summary_data_mj, aes(x=prenatal_smoker, y = mj_ever_num)) +
+  geom_bar(stat="identity", position=position_dodge()) + 
+  labs(title="Marijuana Proportion based on Mom Smoking Period",
+       x="Mom Smoking Period", y="Marijuana Proportion")
+summary_data_cig <- tobacco_sev %>%
+  group_by(prenatal_smoker) %>%
+  filter(!is.na(prenatal_smoker)) %>%
+  summarize(cig_ever_num = sum(as.numeric(as.character(cig_ever)) > 0, na.rm = TRUE) / n())
+
+p2 <- ggplot(summary_data_cig, aes(x=prenatal_smoker, y = cig_ever_num)) +
+  geom_bar(stat="identity", position=position_dodge()) + 
+  labs(title="Cigarette Proportion based on Mom Smoking Period",
+       x="Mom Smoking Period", y="Cigarette Proportion")
+```
+
+
